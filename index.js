@@ -1,75 +1,70 @@
 import express from "express";
-import fs from "node:fs/promises";
+import Database from "better-sqlite3";
 
 const app = express();
 app.use(express.json());
 
-async function getList() {
-  return JSON.parse(await fs.readFile(`./list.json`, { encoding: "utf8" }));
-}
+const db = new Database("data.db");
 
-app.get("/", async (req, res) => {
-  let copy = await getList();
-  copy = copy.sort((a, b) => a.Empire - b.Empire);
+db.prepare(
+  `
+  CREATE TABLE IF NOT EXISTS governors (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    Empire INTEGER,
+    IGN TEXT,
+    Power TEXT,
+    PowerNum REAL
+  )
+`,
+).run();
 
-  res.status(200).json(copy);
+app.get("/", (req, res) => {
+  const list = db.prepare("SELECT * FROM governors ORDER BY Empire ASC").all();
+  res.status(200).json(list);
 });
 
-app.get("/servers", async (_, res) => {
-  const servers = new Set();
-  const list = await getList();
-  list.forEach((entry) => {
-    if (!servers.has(entry.Empire)) {
-      servers.add(entry.Empire);
-    }
-  });
-
-  const order = [...servers].sort((a, b) => a - b);
-  res.status(200).json({ servers: order });
+app.get("/servers", (_, res) => {
+  const servers = db
+    .prepare("SELECT DISTINCT Empire FROM governors")
+    .all()
+    .map((s) => s.Empire)
+    .sort((a, b) => a - b);
+  res.status(200).json({ servers });
 });
 
-app.get("/server", async (req, res) => {
+app.get("/server", (req, res) => {
   const { server } = req.query;
-
-  const list = await getList();
-  const copy = list
-    .filter(({ Empire }) => +Empire === +server)
-    .sort((a, b) => a.Power - b.Power);
-  res.status(200).json({
-    players: copy,
-  });
+  const list = db
+    .prepare("SELECT * FROM governors WHERE Empire = ? ORDER BY PowerNum DESC")
+    .all(server);
+  res.status(200).json({ players: list });
 });
 
-app.get("/power", async (_, res) => {
-  const strip = (string) => {
-    return Number(string.split("M")[0]);
-  };
-  const copy = await getList();
-  copy.sort((a, b) => strip(b.Power) - strip(a.Power));
-
-  res.status(200).json(copy);
+app.get("/power", (_, res) => {
+  const list = db
+    .prepare("SELECT * FROM governors ORDER BY PowerNum DESC")
+    .all();
+  res.status(200).json(list);
 });
 
-app.get("/add", async (req, res) => {
+app.get("/add", (req, res) => {
   const { ign, power, empire } = req.query;
+  const powerStr = `${power}M`;
+  const powerNum = Number(power);
 
-  const newGovernor = {
-    Empire: empire,
+  const stmt = db.prepare(`
+    INSERT INTO governors (Empire, IGN, Power, PowerNum)
+    VALUES (?, ?, ?, ?)
+  `);
+  stmt.run(empire, ign, powerStr, powerNum);
+
+  res.status(200).json({
+    Empire: Number(empire),
     IGN: ign,
-    Power: `${power}M`,
-  };
-  const list = await getList();
-
-  await fs.writeFile(
-    "./list.json",
-    JSON.stringify([...list, newGovernor], null, 2),
-  );
-
-  res.status(200).json(newGovernor);
+    Power: powerStr,
+  });
 });
 
 app.listen(3000, () => {
-  console.log(`Server running on http://localhost:3000`);
+  console.log("Server running at http://localhost:3000");
 });
-
-export default app;
